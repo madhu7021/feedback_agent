@@ -5,7 +5,9 @@ from http.server import HTTPServer, BaseHTTPRequestHandler
 from urllib.parse import parse_qs
 
 from database import (
-    init_db
+    init_db,
+    AUDIO_DIR,
+    IMAGE_DIR
 )
 
 from text_manager import (
@@ -30,9 +32,12 @@ from html_handler import (
     build_page
 )
 
-DB_FILE = "prompts.db"
-AUDIO_DIR = "audio_records"
-IMAGE_DIR = "image_records"
+from ui_builder import (
+    build_prompt_html,
+    build_audio_html,
+    build_latest_image_html,
+    build_image_html
+)
 
 #
 # ==================================================
@@ -57,98 +62,21 @@ class PromptHandler(BaseHTTPRequestHandler):
         if image_files is None:
             image_files = []
         
-        prompt_html = ""
+        prompt_html = build_prompt_html(
+            prompts
+        )
 
-        audio_html = ""
-        
-        image_html = ""
-        
-        latest_image_html = ""
+        audio_html = build_audio_html(
+            audio_files
+        )
 
-        if audio_files:
+        latest_image_html = build_latest_image_html(
+            latest_image
+        )
 
-            audio_html = """
-            <h3>Saved Audio Files (Latest 10)</h3>
-            <ul>
-            """
-
-            for audio in audio_files:
-
-                audio_html += f"""
-                <li>
-                    /audio/{audio}
-                        {audio}
-                    </a>
-                </li>
-                """
-
-            audio_html += "</ul>"
-    
-        if prompts:
-
-            prompt_html = """
-            <h3>Saved Prompts (Latest 10)</h3>
-            <ul>
-            """
-
-            for p in prompts:
-                prompt_html += f"<li>{p}</li>"
-
-            prompt_html += "</ul>"
-
-        if latest_image:
-
-            latest_image_html = f"""
-            <h3>Latest Uploaded Image</h3>
-
-            <img
-                src="/image/{latest_image}"
-                width="300">
-            """
-
-        if image_files:
-
-            image_html = """
-            <h3>Images (Latest 10)</h3>
-
-            <div style="
-                display:flex;
-                flex-wrap:wrap;
-                gap:20px;
-            ">
-            """
-
-            for image in image_files:
-
-                image_html += f"""
-                <div style="
-                    width:220px;
-                    text-align:center;
-                    border:1px solid #ddd;
-                    border-radius:8px;
-                    padding:10px;
-                    background:#fafafa;
-                ">
-
-                /image/{image}
-
-                <img
-                           </a>
-
-                <br><br>
-
-                <div style="
-                    font-size:12px;
-                    word-wrap:break-word;
-                    overflow-wrap:break-word;
-                ">
-                    {image}
-                </div>
-
-                </div>
-                """
-
-            image_html += "</div>"
+        image_html = build_image_html(
+            image_files
+        )
         
         html = build_page(
             message,
