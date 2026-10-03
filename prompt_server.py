@@ -6,6 +6,15 @@ from urllib.parse import parse_qs
 
 DB_FILE = "prompts.db"
 AUDIO_DIR = "audio_records"
+IMAGE_DIR = "image_records"
+
+ALLOWED_IMAGE_EXTENSIONS = {
+".png",
+".jpg",
+".jpeg",
+".gif",
+".webp"
+}
 
 # ==================================================
 # Database
@@ -13,7 +22,8 @@ AUDIO_DIR = "audio_records"
 def init_db():
 
     os.makedirs(AUDIO_DIR, exist_ok=True)
-
+    os.makedirs(IMAGE_DIR, exist_ok=True)
+    
     conn = sqlite3.connect(DB_FILE)
     cur = conn.cursor()
 
@@ -31,9 +41,15 @@ def init_db():
         )
     """)
 
+    cur.execute("""
+    CREATE TABLE IF NOT EXISTS images (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        filename TEXT NOT NULL
+    )
+    """)
+    
     conn.commit()
     conn.close()
-
 
 # ==================================================
 # Prompt Functions
@@ -61,7 +77,6 @@ def save_prompt(prompt):
     conn.commit()
     conn.close()
 
-
 def get_prompts():
 
     conn = sqlite3.connect(DB_FILE)
@@ -78,7 +93,6 @@ def get_prompts():
     conn.close()
 
     return [row[0] for row in rows]
-
 
 # ==================================================
 # Audio Functions
@@ -126,7 +140,6 @@ def save_audio(filename):
     conn.commit()
     conn.close()
 
-
 def get_audio_files():
 
     conn = sqlite3.connect(DB_FILE)
@@ -143,7 +156,6 @@ def get_audio_files():
     conn.close()
 
     return [row[0] for row in rows]
-
 
 def get_latest_audio():
 
@@ -166,6 +178,90 @@ def get_latest_audio():
 
     return None
 
+def is_valid_image(filename):
+
+    ext = os.path.splitext(
+        filename
+    )[1].lower()
+
+    return ext in ALLOWED_IMAGE_EXTENSIONS
+    
+def save_image(filename):
+
+    conn = sqlite3.connect(DB_FILE)
+    cur = conn.cursor()
+
+    cur.execute(
+        "INSERT INTO images(filename) VALUES(?)",
+        (filename,)
+    )
+
+    conn.commit()
+
+    cur.execute("""
+        SELECT id, filename
+        FROM images
+        ORDER BY id DESC
+    """)
+
+    rows = cur.fetchall()
+
+    if len(rows) > 10:
+
+        for row in rows[10:]:
+
+            old_id = row[0]
+            old_file = row[1]
+
+            full_path = os.path.join(
+                IMAGE_DIR,
+                old_file
+            )
+
+            if os.path.exists(full_path):
+                os.remove(full_path)
+
+            cur.execute(
+                "DELETE FROM images WHERE id=?",
+                (old_id,)
+            )
+
+    conn.commit()
+    
+def get_image_files():
+
+    conn = sqlite3.connect(DB_FILE)
+    cur = conn.cursor()
+
+    cur.execute("""
+        SELECT filename
+        FROM images
+        ORDER BY id DESC
+    """)
+
+    rows = cur.fetchall()
+
+    conn.close()
+
+    return [row[0] for row in rows]
+    
+def get_latest_image():
+
+    conn = sqlite3.connect(DB_FILE)
+    cur = conn.cursor()
+
+    cur.execute("""
+        SELECT filename
+        FROM images
+        ORDER BY id DESC
+        LIMIT 1
+    """)
+
+    row = cur.fetchone()
+
+    conn.close()
+
+    return row[0] if row else None
 
 # ==================================================
 # HTTP Handler
@@ -176,17 +272,26 @@ class PromptHandler(BaseHTTPRequestHandler):
             self,
             message="",
             prompts=None,
-            audio_files=None):
+            audio_files=None,
+            image_files=None,
+            latest_image=None):
 
         if prompts is None:
             prompts = []
         
         if audio_files is None:
             audio_files = []
+            
+        if image_files is None:
+            image_files = []
         
         prompt_html = ""
 
         audio_html = ""
+        
+        image_html = ""
+        
+        latest_image_html = ""
 
         if audio_files:
 
@@ -219,6 +324,60 @@ class PromptHandler(BaseHTTPRequestHandler):
 
             prompt_html += "</ul>"
 
+        if latest_image:
+
+            latest_image_html = f"""
+            <h3>Latest Uploaded Image</h3>
+
+            <img
+                src="/image/{latest_image}"
+                width="300">
+            """
+
+        if image_files:
+
+            image_html = """
+            <h3>Images (Latest 10)</h3>
+
+            <div style="
+                display:flex;
+                flex-wrap:wrap;
+                gap:20px;
+            ">
+            """
+
+            for image in image_files:
+
+                image_html += f"""
+                <div style="
+                    width:220px;
+                    text-align:center;
+                    border:1px solid #ddd;
+                    border-radius:8px;
+                    padding:10px;
+                    background:#fafafa;
+                ">
+
+                /image/{image}
+
+                <img
+                           </a>
+
+                <br><br>
+
+                <div style="
+                    font-size:12px;
+                    word-wrap:break-word;
+                    overflow-wrap:break-word;
+                ">
+                    {image}
+                </div>
+
+                </div>
+                """
+
+            image_html += "</div>"
+        
         html = f"""
 <!DOCTYPE html>
 <html>
@@ -385,6 +544,42 @@ function playLatestAudio()
     player.play();
 }}
 
+async function uploadImage()
+{{
+    const file = document.getElementById(
+            "imageFile"
+        ).files[0];
+
+    if(!file)
+        return;
+
+    const formData =
+        new FormData();
+
+    formData.append(
+        "image",
+        file,
+        file.name
+    );
+
+    const response = await fetch(
+            "/upload_image",
+            {{
+                method: "POST",
+                body: formData
+            }}
+        );
+
+    if(response.ok)
+    {{
+        alert("Image Uploaded");
+    }}
+    else
+    {{
+        alert("Upload Failed");
+    }}
+}}
+
 </script>
 
 </head>
@@ -403,23 +598,30 @@ name="prompt"
 placeholder="Enter your prompt here..."
 ></textarea>
 
+<input
+    type="file"
+    id="imageFile"
+    accept="image/png,image/jpeg,image/gif,image/webp"
+    style="display:none"
+    onchange="uploadImage()">
+
 <br>
 
 <button type="submit"
         name="action"
         value="save">
-Submit
+Save Prompt
 </button>
 
 <button type="submit"
         name="action"
         value="show">
-Show Prompts
+Show Prompt
 </button>
 
 <button type="button"
         onclick="clearText()">
-Clear
+Clear Prompt
 </button>
 
 <br><br>
@@ -445,6 +647,28 @@ Audio_Play
 Show Audio
 </button>
 
+<br><br>
+
+<button
+        type="button"
+        onclick="document.getElementById('imageFile').click();">
+Image_Upload
+</button>
+
+<button
+        type="submit"
+        name="action"
+        value="show_image">
+Image_Show
+</button>
+
+<button
+    type="submit"
+    name="action"
+    value="list_image">
+Image_List
+</button>
+
 </form>
 
 <div id="record_status"></div>
@@ -464,6 +688,10 @@ style="display:none;width:100%;">
 {prompt_html}
 
 {audio_html}
+
+{latest_image_html}
+
+{image_html}
 
 </div>
 
@@ -548,6 +776,50 @@ style="display:none;width:100%;">
 
                 return
 
+        elif self.path.startswith("/image/"):
+
+            filename = self.path.split("/")[-1]
+
+            image_path = os.path.join(
+                IMAGE_DIR,
+                filename
+            )
+
+            if os.path.exists(image_path):
+
+                ext = filename.lower()
+
+                if ext.endswith(".png"):
+                    mime = "image/png"
+
+                elif ext.endswith(".gif"):
+                    mime = "image/gif"
+
+                elif ext.endswith(".webp"):
+                    mime = "image/webp"
+
+                else:
+                    mime = "image/jpeg"
+
+                self.send_response(200)
+
+                self.send_header(
+                    "Content-Type",
+                    mime
+                )
+
+                self.end_headers()
+
+                with open(
+                    image_path,
+                    "rb"
+                ) as f:
+
+                    self.wfile.write(
+                        f.read()
+                    )
+
+                return    
         self.render_page()
 
     # ------------------------------------------------
@@ -625,6 +897,102 @@ style="display:none;width:100%;">
             return
 
         #
+        # Image Upload
+        #
+        if self.path == "/upload_image":
+
+            print("IMAGE UPLOAD REQUEST")
+
+            content_length = int(
+                self.headers["Content-Length"]
+            )
+
+            data = self.rfile.read(
+                content_length
+            )
+
+            boundary = self.headers[
+                "Content-Type"
+            ].split("boundary=")[1].encode()
+
+            parts = data.split(
+                b"--" + boundary
+            )
+
+            for part in parts:
+
+                if b'filename="' in part:
+
+                    match = re.search(
+                        rb'filename="([^"]+)"',
+                        part
+                    )
+
+                    if not match:
+                        continue
+
+                    filename = match.group(
+                        1
+                    ).decode()
+
+                    print(
+                        "Image filename:",
+                        filename
+                    )
+
+                    if not is_valid_image(
+                        filename
+                    ):
+                        self.send_response(400)
+                        self.end_headers()
+                        self.wfile.write(
+                            b"Invalid Image Type"
+                        )
+                        return
+
+                    header_end = part.find(
+                        b'\r\n\r\n'
+                    )
+
+                    if header_end == -1:
+                        continue
+
+                    file_data = part[
+                        header_end + 4:
+                    ]
+
+                    file_data = file_data.rstrip(
+                        b'\r\n'
+                    )
+
+                    save_path = os.path.join(
+                        IMAGE_DIR,
+                        filename
+                    )
+
+                    print(
+                        "Saving to:",
+                        save_path
+                    )
+
+                    with open(
+                        save_path,
+                        "wb"
+                    ) as f:
+
+                        f.write(file_data)
+
+                    save_image(filename)
+
+                    break
+
+            self.send_response(200)
+            self.end_headers()
+            self.wfile.write(b"OK")
+
+            return
+    
+        #
         # Form handling
         #
         content_length = int(
@@ -679,10 +1047,23 @@ style="display:none;width:100%;">
             self.render_page(
                 audio_files=audio_files
             )
+        
+        elif action == "show_image":
+
+            print("Showing image")
+            self.render_page(
+                latest_image=get_latest_image()
+            )
+            
+        elif action == "list_image":
+            
+            print("Listing image")
+            self.render_page(
+                image_files=get_image_files()
+            )
         else:
 
             self.render_page()
-
 
 # ==================================================
 # Main

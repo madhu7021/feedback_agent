@@ -7,8 +7,11 @@ Has:
 ✅ Audio Record Start
 ✅ Audio Record Stop
 ✅ Audio Play
-✅ Audio Show
+✅ Image Show
+✅ Image Upload
+✅ Image Show
+✅ Image List
 
 Stores prompts in a small SQLite database
-Keeps only the latest 10 prompts and Audio records.
+Keeps only the latest 10 Text, Audio and Image prompts.
 
